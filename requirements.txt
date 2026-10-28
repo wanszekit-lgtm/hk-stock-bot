@@ -1,5 +1,2 @@
-flask
+Flask
 requests
-yfinance
-pandas
-tradingview-ta
