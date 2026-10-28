@@ -3,39 +3,47 @@ from flask import Flask, request
 import requests
 import csv
 import io
+import urllib.parse
 
 app = Flask(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
+def fetch_with_fallback(original_url):
+    # 3個免費代理，逐個試
+    encoded = urllib.parse.quote(original_url, safe='')
+    proxies = [
+        f"https://api.allorigins.win/raw?url={encoded}",
+        f"https://api.codetabs.com/v1/proxy?quest={encoded}",
+        f"https://corsproxy.io/?{encoded}",
+        original_url  # 最後直接試stooq本身
+    ]
+    for p_url in proxies:
+        try:
+            r = requests.get(p_url, timeout=20)
+            if r.status_code == 200 and "Symbol" in r.text:
+                return r.text
+        except:
+            continue
+    return None
+
 def get_price(code):
     try:
-        # stooq 係免費港股source，0700.hk咁樣查
         clean_code = code.lstrip('0') or '0'
         stooq_url = f"https://stooq.com/q/l/?s={clean_code}.hk&f=sd2t2ohlcv&h&e=csv"
-        # 用 allorigins 代理繞過PythonAnywhere白名單
-        proxy_url = f"https://api.allorigins.win/raw?url={stooq_url}"
         
-        r = requests.get(proxy_url, timeout=12)
-        if r.status_code != 200 or "Close" not in r.text:
-            return f"暫時攞唔到 {code}.HK，stooq冇回應"
+        csv_text = fetch_with_fallback(stooq_url)
+        if not csv_text:
+            return f"📈 {code}.HK\n網絡繁忙(代理Timeout)，請30秒後再試700\n(免費版代理半夜唔穩定)"
 
-        reader = csv.DictReader(io.StringIO(r.text))
+        reader = csv.DictReader(io.StringIO(csv_text))
         for row in reader:
-            # 會有 N/D 如果收市後
             close = row.get('Close', 'N/D')
-            open_p = row.get('Open', 'N/D')
-            high = row.get('High', 'N/D')
-            low = row.get('Low', 'N/D')
-            vol = row.get('Volume', 'N/D')
-            
-            if close == 'N/D':
-                return f"📈 {code}.HK\n今日未有交易/數據延遲\n試下 5 / 2800"
-            
-            return f"📈 騰訊 {code}.HK (免費版)\n現價: ${close}\n開: {open_p} 高: {high} 低: {low}\n成交量: {vol}\n\n來源: stooq.com"
-        
+            if close in ('N/D', '', None):
+                return f"📈 {code}.HK 收市後無即時數據，明早再試\n(今日可能未開市)"
+            return f"📈 {code}.HK 免費版V5\n現價: ${close}\n開: {row.get('Open')} 高: {row.get('High')} 低: {row.get('Low')}\n成交量: {row.get('Volume')}\n來源: stooq"
         return f"搵唔到 {code}.HK"
     except Exception as e:
-        return f"攞價出錯 {code}: {e}"
+        return f"V5出錯 {code}: {e}"
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
@@ -43,15 +51,10 @@ def webhook():
     if "message" in data and "text" in data["message"]:
         chat_id = data["message"]["chat"]["id"]
         text = data["message"]["text"].strip()
-
-        if text.isdigit():
-            reply = get_price(text)
-        else:
-            reply = f"你打咗: {text}\n試下打 700 或 2800 查港股"
-
+        reply = get_price(text) if text.isdigit() else f"試下打 700 / 2800 / 5"
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", params={"chat_id": chat_id, "text": reply})
     return "ok"
 
 @app.route("/")
 def home():
-    return "HK Bot 免費版 V4 - stooq + allorigins - 運行中"
+    return "HK Bot V5 三代理備份版運行中"
