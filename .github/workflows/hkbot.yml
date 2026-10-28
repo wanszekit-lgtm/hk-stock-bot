@@ -1,26 +1,36 @@
-name: HK Stock Bot
-
+name: Update Prices
 on:
-  schedule:
-    # 香港時間 09:35 跑 (UTC 01:35) 逢星期一至五
-    - cron: '35 1 * * 1-5'
   workflow_dispatch:
-
+  schedule:
+    - cron: '0 1 * * 1-5'
 jobs:
-  run:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-          
-      - name: Install libs
-        run: pip install -r requirements.txt
-        
-      - name: Run bot
-        run: python hkbot.py
-        env:
-          TOKEN: ${{ secrets.TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+          python-version: '3.10'
+      - run: pip install yfinance
+      - run: |
+          python -c "
+          import yfinance as yf, json, datetime
+          codes=['0700.HK','2800.HK','0005.HK','0941.HK','3690.HK','9988.HK','0939.HK','1299.HK','0388.HK','2318.HK']
+          data={}
+          for c in codes:
+           try:
+            h=yf.Ticker(c).history(period='1d')
+            data[c]=round(float(h['Close'].iloc[-1]),2) if not h.empty else 0
+           except: data[c]=0
+          data['_updated']=datetime.datetime.now().isoformat()
+          open('prices.json','w').write(json.dumps(data,indent=2))
+          print(data)
+          "
+      - run: |
+          git config user.name 'bot'
+          git config user.email 'bot@bot.com'
+          git add prices.json
+          git commit -m 'Update Prices' || echo 'no change'
+          git push
